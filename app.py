@@ -2,48 +2,41 @@ import streamlit as st
 import pandas as pd
 import joblib
 
-# Load predictor class
+# Cache the model so it's loaded only once
+@st.cache_resource
+def load_predictor(model_path="renewable_energy_model.pkl"):
+    deployment_package = joblib.load(model_path)
+    return deployment_package
+
+# Predictor class
 class RenewableEnergyPredictor:
-    def __init__(self, model_path='renewable_energy_model.pkl'):
-        self.deployment_package = joblib.load(model_path)
-        self.model = self.deployment_package['model']
-        self.scaler = self.deployment_package['scaler']
-        self.label_encoder = self.deployment_package['label_encoder']
-        self.feature_names = self.deployment_package['feature_names']
+    def __init__(self, deployment_package):
+        self.model = deployment_package['model']
+        self.scaler = deployment_package['scaler']
+        self.label_encoder = deployment_package['label_encoder']
+        self.feature_names = deployment_package['feature_names']
         
-    def predict(self, input_data):
-        if isinstance(input_data, dict):
-            input_df = pd.DataFrame([input_data])
-        else:
-            input_df = input_data.copy()
-            
-        # Ensure all required features are present
-        for feature in self.feature_names:
-            if feature not in input_df.columns:
-                raise ValueError(f"Missing feature: {feature}")
-                
-        # Reorder columns
+    def predict(self, input_data: dict):
+        input_df = pd.DataFrame([input_data])
+        # Ensure column order
         input_df = input_df[self.feature_names]
-        
-        # Encode Region_ID if categorical
+
+        # Encode Region_ID
         if 'Region_ID' in input_df.columns and input_df['Region_ID'].dtype == 'object':
             input_df['Region_ID'] = self.label_encoder.transform(input_df['Region_ID'])
         
         # Scale
         input_scaled = self.scaler.transform(input_df)
-        
-        # Predict
-        prediction = self.model.predict(input_scaled)
-        return prediction[0]
+        return self.model.predict(input_scaled)[0]
 
-# Streamlit App
+# ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="India Renewable Energy Predictor", page_icon="⚡", layout="centered")
-
 st.title("⚡ India Renewable Energy Capacity Predictor")
 st.write("Predict renewable energy capacity (MW) based on key infrastructure, economic, and environmental factors.")
 
-# Load predictor
-predictor = RenewableEnergyPredictor()
+# Load predictor once
+deployment_package = load_predictor()
+predictor = RenewableEnergyPredictor(deployment_package)
 
 # Input form
 with st.form("prediction_form"):
