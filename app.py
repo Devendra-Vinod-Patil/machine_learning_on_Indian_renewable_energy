@@ -1,146 +1,95 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import plotly.express as px
+import joblib
 
-# Set page configuration
-st.set_page_config(page_title="India Renewable Energy Dashboard", layout="wide")
+# Load predictor class
+class RenewableEnergyPredictor:
+    def __init__(self, model_path='renewable_energy_model.pkl'):
+        self.deployment_package = joblib.load(model_path)
+        self.model = self.deployment_package['model']
+        self.scaler = self.deployment_package['scaler']
+        self.label_encoder = self.deployment_package['label_encoder']
+        self.feature_names = self.deployment_package['feature_names']
+        
+    def predict(self, input_data):
+        if isinstance(input_data, dict):
+            input_df = pd.DataFrame([input_data])
+        else:
+            input_df = input_data.copy()
+            
+        # Ensure all required features are present
+        for feature in self.feature_names:
+            if feature not in input_df.columns:
+                raise ValueError(f"Missing feature: {feature}")
+                
+        # Reorder columns
+        input_df = input_df[self.feature_names]
+        
+        # Encode Region_ID if categorical
+        if 'Region_ID' in input_df.columns and input_df['Region_ID'].dtype == 'object':
+            input_df['Region_ID'] = self.label_encoder.transform(input_df['Region_ID'])
+        
+        # Scale
+        input_scaled = self.scaler.transform(input_df)
+        
+        # Predict
+        prediction = self.model.predict(input_scaled)
+        return prediction[0]
 
-# Title and description
-st.title("India Renewable Energy Dashboard")
-st.markdown("""
-This dashboard provides an interactive exploration of the India Renewable Energy dataset, 
-including data overview, visualizations, and machine learning model performance.
-""")
+# Streamlit App
+st.set_page_config(page_title="India Renewable Energy Predictor", page_icon="⚡", layout="centered")
 
-# Load the dataset
-@st.cache_data
-def load_data():
-    df = pd.read_csv('India_Renewable_Energy.csv')
-    return df
+st.title("⚡ India Renewable Energy Capacity Predictor")
+st.write("Predict renewable energy capacity (MW) based on key infrastructure, economic, and environmental factors.")
 
-df = load_data()
+# Load predictor
+predictor = RenewableEnergyPredictor()
 
-# Sidebar for navigation
-st.sidebar.header("Navigation")
-page = st.sidebar.selectbox("Choose a page", ["Data Overview", "Visualizations", "Model Performance"])
+# Input form
+with st.form("prediction_form"):
+    st.subheader("Enter Input Features")
 
-# Data Overview Page
-if page == "Data Overview":
-    st.header("Data Overview")
-    
-    st.subheader("Dataset Preview")
-    st.write("First 5 rows of the dataset:")
-    st.dataframe(df.head())
-    
-    st.write("Last 5 rows of the dataset:")
-    st.dataframe(df.tail())
-    
-    st.subheader("Dataset Shape")
-    st.write(f"The dataset has {df.shape[0]} rows and {df.shape[1]} columns.")
-    
-    st.subheader("Dataset Info")
-    buffer = pd.DataFrame(df.dtypes, columns=['Data Type'])
-    buffer['Missing Values'] = df.isnull().sum()
-    buffer['Unique Values'] = df.nunique()
-    st.dataframe(buffer)
+    region_id = st.text_input("Region ID (e.g., IN-MH)", "IN-MH")
+    total_energy_demand = st.number_input("Total Energy Demand (MWh)", min_value=0, value=4000000)
+    coal_generation = st.number_input("Coal Power Generation (MWh)", min_value=0, value=2000000)
+    carbon_emission = st.number_input("Carbon Emission (tCO2)", min_value=0, value=15000000)
+    transmission_capacity = st.number_input("Transmission Capacity (MW)", min_value=0, value=20000)
+    transmission_completion_rate = st.slider("Transmission Completion Rate (%)", 0.0, 100.0, 70.0)
+    psa_signed = st.selectbox("PSA Signed", [0, 1])
+    discom_debt = st.number_input("DISCOM Debt (USD)", min_value=0, value=300000000)
+    atc_loss = st.slider("AT&C Loss Percent", 0.0, 100.0, 20.0)
+    land_delay = st.number_input("Land Acquisition Delay (Months)", min_value=0, value=15)
+    renewable_subsidy = st.number_input("Renewable Subsidy (USD)", min_value=0, value=50000000)
+    coal_subsidy = st.number_input("Coal Subsidy (USD)", min_value=0, value=200000000)
+    storage_capacity = st.number_input("Energy Storage Capacity (MW)", min_value=0, value=3000)
+    growth_rate = st.number_input("Economic Growth Rate (%)", min_value=0.0, value=6.5, step=0.1)
+    year = st.number_input("Year", min_value=2000, value=2023)
+    month = st.number_input("Month", min_value=1, max_value=12, value=6)
 
-# Visualizations Page
-elif page == "Visualizations":
-    st.header("Data Visualizations")
-    
-    # Filter by Region_ID
-    regions = df['Region_ID'].unique()
-    selected_region = st.selectbox("Select Region", ['All'] + list(regions))
-    
-    # Filter by Time Period
-    time_periods = df['Time_Period'].unique()
-    selected_time = st.selectbox("Select Time Period", ['All'] + list(time_periods))
-    
-    # Apply filters
-    filtered_df = df
-    if selected_region != 'All':
-        filtered_df = filtered_df[filtered_df['Region_ID'] == selected_region]
-    if selected_time != 'All':
-        filtered_df = filtered_df[filtered_df['Time_Period'] == selected_time]
-    
-    st.subheader("Filtered Data")
-    st.dataframe(filtered_df)
-    
-    # Plot Renewable Capacity Added
-    st.subheader("Renewable Capacity Added Over Time")
-    if not filtered_df.empty:
-        fig = px.line(filtered_df, x='Time_Period', y='Renewable_Capacity_Added_MW', 
-                      color='Region_ID', title="Renewable Capacity Added (MW)")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("No data available for the selected filters.")
-    
-    # Plot Carbon Emissions
-    st.subheader("Carbon Emissions Distribution")
-    fig = px.histogram(filtered_df, x='Carbon_Emission_tCO2', 
-                       title="Distribution of Carbon Emissions (tCO2)")
-    st.plotly_chart(fig, use_container_width=True)
+    submitted = st.form_submit_button("🔮 Predict")
 
-# Model Performance Page
-elif page == "Model Performance":
-    st.header("Model Performance")
-    
-    st.subheader("Random Forest Regressor")
-    st.markdown("""
-    The Random Forest Regressor was identified as the best model with the lowest Mean Squared Error (MSE).
-    Below are the steps and results of the model training and evaluation.
-    """)
-    
-    # Prepare data for modeling
-    features = ['Total_Energy_Demand_MWh', 'Coal_Power_Generation_MWh', 
-                'Transmission_Capacity_MW', 'Transmission_Completion_Rate', 
-                'DISCOM_Debt_USD', 'AT_C_Loss_Percent', 
-                'Land_Acquisition_Delay_Months', 'Renewable_Subsidy_USD', 
-                'Coal_Subsidy_USD', 'Energy_Storage_Capacity_MW', 
-                'Economic_Growth_Rate']
-    target = 'Renewable_Capacity_Added_MW'
-    
-    # Drop rows with missing values in features or target
-    model_df = df[features + [target]].dropna()
-    X = model_df[features]
-    y = model_df[target]
-    
-    # Train-test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Train Random Forest model
-    model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
-    model.fit(X_train_scaled, y_train)
-    
-    # Predictions
-    y_pred = model.predict(X_test_scaled)
-    
-    # Metrics
-    mse = mean_squared_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-    
-    st.write(f"**Mean Squared Error (MSE):** {mse:.2f}")
-    st.write(f"**R² Score:** {r2:.4f}")
-    
-    # Feature importance
-    st.subheader("Feature Importance")
-    feature_importance = pd.DataFrame({
-        'Feature': features,
-        'Importance': model.feature_importances_
-    }).sort_values(by='Importance', ascending=False)
-    
-    fig = px.bar(feature_importance, x='Importance', y='Feature', 
-                 title="Feature Importance in Random Forest Model")
-    st.plotly_chart(fig, use_container_width=True)   
+    if submitted:
+        sample_input = {
+            'Region_ID': region_id,
+            'Total_Energy_Demand_MWh': total_energy_demand,
+            'Coal_Power_Generation_MWh': coal_generation,
+            'Carbon_Emission_tCO2': carbon_emission,
+            'Transmission_Capacity_MW': transmission_capacity,
+            'Transmission_Completion_Rate': transmission_completion_rate,
+            'PSA_Signed': psa_signed,
+            'DISCOM_Debt_USD': discom_debt,
+            'AT_C_Loss_Percent': atc_loss,
+            'Land_Acquisition_Delay_Months': land_delay,
+            'Renewable_Subsidy_USD': renewable_subsidy,
+            'Coal_Subsidy_USD': coal_subsidy,
+            'Energy_Storage_Capacity_MW': storage_capacity,
+            'Economic_Growth_Rate': growth_rate,
+            'Year': year,
+            'Month': month
+        }
+
+        try:
+            prediction = predictor.predict(sample_input)
+            st.success(f"🌍 Predicted Renewable Capacity: **{prediction:.2f} MW**")
+        except Exception as e:
+            st.error(f"Prediction failed: {e}")
