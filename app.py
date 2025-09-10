@@ -1,165 +1,164 @@
-# Import necessary libraries
 import streamlit as st
 import pandas as pd
-import joblib
+# numpy is used by pandas/sklearn, but not directly in your code. Can be removed.
+# import numpy as np 
+# matplotlib and seaborn are imported but never used.
+# import matplotlib.pyplot as plt 
+# import seaborn as sns
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import plotly.express as px
 
-# --- Model Loading ---
-# Use Streamlit's caching to load the model only once, improving performance.
+# Set page configuration
+st.set_page_config(page_title="India Renewable Energy Dashboard", layout="wide")
+
+# Title and description
+st.title("India Renewable Energy Dashboard")
+st.markdown("""
+This dashboard provides an interactive exploration of the India Renewable Energy dataset, 
+including data overview, visualizations, and machine learning model performance.
+""")
+
+# Load the dataset (this part is already correctly cached)
+@st.cache_data
+def load_data():
+    df = pd.read_csv('India_Renewable_Energy.csv')
+    return df
+
+# NEW: Cache expensive dataframe info calculation
+@st.cache_data
+def get_df_info(df):
+    buffer = pd.DataFrame(df.dtypes, columns=['Data Type'])
+    buffer['Missing Values'] = df.isnull().sum()
+    buffer['Unique Values'] = df.nunique()
+    return buffer
+
+# NEW: Create a cached function for model training using st.cache_resource
 @st.cache_resource
-def load_predictor(model_path="pickle.pkl"):
-    """
-    Loads the trained model and associated preprocessing objects from a pickle file.
+def train_model(df):
+    # Prepare data for modeling
+    features = ['Total_Energy_Demand_MWh', 'Coal_Power_Generation_MWh', 
+                'Transmission_Capacity_MW', 'Transmission_Completion_Rate', 
+                'DISCOM_Debt_USD', 'AT_C_Loss_Percent', 
+                'Land_Acquisition_Delay_Months', 'Renewable_Subsidy_USD', 
+                'Coal_Subsidy_USD', 'Energy_Storage_Capacity_MW', 
+                'Economic_Growth_Rate']
+    target = 'Renewable_Capacity_Added_MW'
     
-    Args:
-        model_path (str): The path to the .pkl file.
-        
-    Returns:
-        dict: A dictionary containing the model, scaler, label encoder, and feature names, or None if loading fails.
-    """
-    try:
-        deployment_package = joblib.load(model_path)
-        return deployment_package
-    except FileNotFoundError:
-        st.error(f"Error: Model file not found at '{model_path}'. Please ensure the file is in the correct directory.")
-        return None
-    except Exception as e:
-        st.error(f"An error occurred while loading the model: {e}")
-        return None
+    # Drop rows with missing values
+    model_df = df[features + [target]].dropna()
+    X = model_df[features]
+    y = model_df[target]
+    
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Train Random Forest model
+    model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+    model.fit(X_train_scaled, y_train)
+    
+    return model, X_test_scaled, y_test, features
 
-# --- Prediction Logic ---
-class RenewableEnergyPredictor:
-    """A class to handle the prediction process."""
-    def __init__(self, deployment_package):
-        """Initializes the predictor with the loaded model and preprocessors."""
-        self.model = deployment_package['model']
-        self.scaler = deployment_package['scaler']
-        self.label_encoder = deployment_package['label_encoder']
-        self.feature_names = deployment_package['feature_names']
-        
-    def predict(self, input_data: dict):
-        """
-        Preprocesses the input data and returns a prediction.
-        
-        Args:
-            input_data (dict): A dictionary of input features from the user.
-            
-        Returns:
-            float: The predicted renewable energy capacity.
-        """
-        # Convert input dictionary to a pandas DataFrame
-        input_df = pd.DataFrame([input_data])
-        
-        # Ensure the columns are in the same order as during model training
-        input_df = input_df[self.feature_names]
+df = load_data()
 
-        # Handle categorical feature: Encode Region_ID if it's a string
-        if 'Region_ID' in input_df.columns and input_df['Region_ID'].dtype == 'object':
-            try:
-                input_df['Region_ID'] = self.label_encoder.transform(input_df['Region_ID'])
-            except ValueError:
-                # Handle the case where the Region_ID is not in the encoder's list of known labels
-                raise ValueError(f"Region ID '{input_data['Region_ID']}' was not seen during training. Please enter a valid Region ID.")
+# Sidebar for navigation
+st.sidebar.header("Navigation")
+page = st.sidebar.selectbox("Choose a page", ["Data Overview", "Visualizations", "Model Performance"])
 
-        # Scale the numerical features using the pre-fitted scaler
-        input_scaled = self.scaler.transform(input_df)
-        
-        # Make the prediction
-        prediction = self.model.predict(input_scaled)
-        
-        return prediction[0]
+# Data Overview Page
+if page == "Data Overview":
+    st.header("Data Overview")
+    
+    st.subheader("Dataset Preview")
+    st.write("First 5 rows of the dataset:")
+    st.dataframe(df.head())
+    
+    st.write("Last 5 rows of the dataset:")
+    st.dataframe(df.tail())
+    
+    st.subheader("Dataset Shape")
+    st.write(f"The dataset has {df.shape[0]} rows and {df.shape[1]} columns.")
+    
+    st.subheader("Dataset Info")
+    # Use the new cached function
+    info_df = get_df_info(df)
+    st.dataframe(info_df)
 
-# --- Streamlit User Interface ---
-st.set_page_config(page_title="India Renewable Energy Predictor", page_icon="⚡", layout="centered")
+# Visualizations Page
+elif page == "Visualizations":
+    st.header("Data Visualizations")
+    
+    # Filter by Region_ID
+    regions = df['Region_ID'].unique()
+    selected_region = st.selectbox("Select Region", ['All'] + list(regions))
+    
+    # Filter by Time Period
+    time_periods = df['Time_Period'].unique()
+    selected_time = st.selectbox("Select Time Period", ['All'] + list(time_periods))
+    
+    # Apply filters
+    filtered_df = df
+    if selected_region != 'All':
+        filtered_df = filtered_df[filtered_df['Region_ID'] == selected_region]
+    if selected_time != 'All':
+        filtered_df = filtered_df[filtered_df['Time_Period'] == selected_time]
+    
+    st.subheader("Filtered Data")
+    st.dataframe(filtered_df)
+    
+    # Plot Renewable Capacity Added
+    st.subheader("Renewable Capacity Added Over Time")
+    if not filtered_df.empty:
+        fig = px.line(filtered_df, x='Time_Period', y='Renewable_Capacity_Added_MW', 
+                      color='Region_ID', title="Renewable Capacity Added (MW)")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No data available for the selected filters.")
+    
+    # Plot Carbon Emissions
+    st.subheader("Carbon Emissions Distribution")
+    fig = px.histogram(filtered_df, x='Carbon_Emission_tCO2', 
+                       title="Distribution of Carbon Emissions (tCO2)")
+    st.plotly_chart(fig, use_container_width=True)
 
-# App title and description
-st.title("⚡ India Renewable Energy Capacity Predictor")
-st.write(
-    "This tool predicts the potential renewable energy capacity (in MW) for a region in India. "
-    "Enter the details below to get a prediction based on key infrastructure, economic, and environmental factors."
-)
-
-# Load the model and instantiate the predictor
-deployment_package = load_predictor()
-
-# Only proceed if the model loaded successfully
-if deployment_package:
-    predictor = RenewableEnergyPredictor(deployment_package)
-
-    # Create a form for user input for better UX
-    with st.form("prediction_form"):
-        st.header("Input Features")
-        
-        # Organize inputs into columns for a cleaner layout
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("Regional & Demand")
-            region_id = st.text_input("Region ID (e.g., IN-MH)", "IN-MH")
-            total_energy_demand = st.number_input("Total Energy Demand (MWh)", min_value=0, value=4000000, help="Total electricity demand in the region.")
-            coal_generation = st.number_input("Coal Power Generation (MWh)", min_value=0, value=2000000, help="Amount of energy generated from coal sources.")
-            carbon_emission = st.number_input("Carbon Emission (tCO2)", min_value=0, value=15000000, help="Total carbon dioxide emissions.")
-            year = st.number_input("Year", min_value=2000, max_value=2050, value=2023)
-            month = st.number_input("Month", min_value=1, max_value=12, value=6)
-
-        with col2:
-            st.subheader("Economic Factors")
-            growth_rate = st.number_input("Economic Growth Rate (%)", min_value=0.0, value=6.5, step=0.1, format="%.1f")
-            discom_debt = st.number_input("DISCOM Debt (USD)", min_value=0, value=300000000, help="Total debt of power distribution companies.")
-            renewable_subsidy = st.number_input("Renewable Subsidy (USD)", min_value=0, value=50000000, help="Government subsidies for renewable energy projects.")
-            coal_subsidy = st.number_input("Coal Subsidy (USD)", min_value=0, value=200000000, help="Government subsidies for coal power.")
-            psa_signed = st.selectbox("PSA Signed", [0, 1], help="1 if Power Sale Agreement is signed, 0 otherwise.")
-            
-        st.divider()
-        
-        st.subheader("Infrastructure & Technical Factors")
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            transmission_capacity = st.number_input("Transmission Capacity (MW)", min_value=0, value=20000)
-            transmission_completion_rate = st.slider("Transmission Completion Rate (%)", 0.0, 100.0, 70.0, format="%.1f")
-            atc_loss = st.slider("AT&C Loss Percent (%)", 0.0, 50.0, 20.0, help="Aggregate Technical & Commercial losses.", format="%.1f")
-            
-        with col4:
-            storage_capacity = st.number_input("Energy Storage Capacity (MW)", min_value=0, value=3000, help="Capacity of energy storage systems like batteries.")
-            land_delay = st.number_input("Land Acquisition Delay (Months)", min_value=0, value=15, help="Average delay in acquiring land for projects.")
-
-        st.write("") # Add some spacing
-        
-        # Submit button for the form
-        submitted = st.form_submit_button("🔮 Predict Capacity")
-
-        if submitted:
-            # Collect all inputs into a dictionary
-            sample_input = {
-                'Region_ID': region_id,
-                'Total_Energy_Demand_MWh': total_energy_demand,
-                'Coal_Power_Generation_MWh': coal_generation,
-                'Carbon_Emission_tCO2': carbon_emission,
-                'Transmission_Capacity_MW': transmission_capacity,
-                'Transmission_Completion_Rate': transmission_completion_rate,
-                'PSA_Signed': psa_signed,
-                'DISCOM_Debt_USD': discom_debt,
-                'AT_C_Loss_Percent': atc_loss,
-                'Land_Acquisition_Delay_Months': land_delay,
-                'Renewable_Subsidy_USD': renewable_subsidy,
-                'Coal_Subsidy_USD': coal_subsidy,
-                'Energy_Storage_Capacity_MW': storage_capacity,
-                'Economic_Growth_Rate': growth_rate,
-                'Year': year,
-                'Month': month
-            }
-
-            # Use a try-except block to handle potential errors during prediction
-            try:
-                # Get the prediction
-                prediction = predictor.predict(sample_input)
-                # Display the result
-                st.success(f"### 🌍 Predicted Renewable Capacity: **{prediction:,.2f} MW**")
-                st.balloons()
-            except ValueError as e:
-                st.error(f"Input Error: {e}")
-            except Exception as e:
-                st.error(f"An unexpected error occurred during prediction: {e}")
-
-else:
-    st.warning("Application cannot start because the prediction model failed to load.")
+# Model Performance Page
+elif page == "Model Performance":
+    st.header("Model Performance")
+    
+    st.subheader("Random Forest Regressor")
+    st.markdown("""
+    The Random Forest Regressor was identified as the best model with the lowest Mean Squared Error (MSE).
+    Below are the results from the pre-trained model.
+    """)
+    
+    # Load the pre-trained model and test data from the cache
+    with st.spinner("Loading Model..."):
+        model, X_test_scaled, y_test, features = train_model(df)
+    
+    # Predictions
+    y_pred = model.predict(X_test_scaled)
+    
+    # Metrics
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    
+    st.write(f"**Mean Squared Error (MSE):** {mse:.2f}")
+    st.write(f"**R² Score:** {r2:.4f}")
+    
+    # Feature importance
+    st.subheader("Feature Importance")
+    feature_importance = pd.DataFrame({
+        'Feature': features,
+        'Importance': model.feature_importances_
+    }).sort_values(by='Importance', ascending=False)
+    
+    fig = px.bar(feature_importance, x='Importance', y='Feature', 
+                 title="Feature Importance in Random Forest Model")
+    st.plotly_chart(fig, use_container_width=True)
